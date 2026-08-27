@@ -16,13 +16,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--project",
-        # [W&B OPTIONAL] The environment variable supplies a reusable default.
-        default=os.environ.get("WANDB_PROJECT", "pytorch-mnist-onboarding"),
+        # [W&B OPTIONAL] Otherwise use the Project selected by `wandb init`.
+        default=os.environ.get("WANDB_PROJECT"),
+        help="Override WANDB_PROJECT or the Project selected by wandb init.",
     )
     parser.add_argument(
         "--entity",
-        # [W&B OPTIONAL] Leave this unset to use your default W&B entity.
+        # [W&B OPTIONAL] Otherwise use the entity selected by `wandb init`.
         default=os.environ.get("WANDB_ENTITY"),
+        help="Override WANDB_ENTITY or the entity selected by wandb init.",
     )
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
     parser.add_argument("--artifact-name", default="mnist-dataset")
@@ -38,7 +40,7 @@ def main() -> None:
     with wandb.init(
         # [W&B WORKFLOW] Keep data, training, and inference together.
         project=args.project,
-        entity=args.entity,  # [W&B OPTIONAL] Omit it to use your default entity.
+        entity=args.entity,  # [W&B OPTIONAL] Otherwise use local W&B settings.
         job_type="prepare-data",  # [W&B RECOMMENDED] Describes the Run's role.
         config={  # [W&B RECOMMENDED] Records how this dataset was prepared.
             "dataset": "MNIST",
@@ -76,7 +78,9 @@ def main() -> None:
         # and inference can consume the same exact dataset.
         logged_dataset.wait()
 
-        print(f"Dataset Artifact: {logged_dataset.qualified_name}")
+        dataset_collection_ref = logged_dataset.qualified_name.rsplit(":", 1)[0]
+        dataset_artifact_ref = f"{dataset_collection_ref}:{logged_dataset.version}"
+        print(f"Dataset Artifact: {dataset_artifact_ref}")
         print(
             f"Dataset images: {train_image_count} train/validation, "
             f"{test_image_count} test"

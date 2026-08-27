@@ -26,13 +26,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--project",
-        # [W&B OPTIONAL] The environment variable supplies a reusable default.
-        default=os.environ.get("WANDB_PROJECT", "pytorch-mnist-onboarding"),
+        # [W&B OPTIONAL] Otherwise use the Project selected by `wandb init`.
+        default=os.environ.get("WANDB_PROJECT"),
+        help="Override WANDB_PROJECT or the Project selected by wandb init.",
     )
     parser.add_argument(
         "--entity",
-        # [W&B OPTIONAL] Leave this unset to use your default W&B entity.
+        # [W&B OPTIONAL] Otherwise use the entity selected by `wandb init`.
         default=os.environ.get("WANDB_ENTITY"),
+        help="Override WANDB_ENTITY or the entity selected by wandb init.",
     )
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
     # [W&B OPTIONAL] Set this only when you want a versioned Dataset Artifact.
@@ -74,7 +76,7 @@ def main() -> None:
     with wandb.init(
         # [W&B WORKFLOW] Keep training and inference together.
         project=args.project,
-        entity=args.entity,  # [W&B OPTIONAL] Omit it to use your default entity.
+        entity=args.entity,  # [W&B OPTIONAL] Otherwise use local W&B settings.
         job_type="train",  # [W&B RECOMMENDED] Describes the Run's role.
         config=config,  # [W&B RECOMMENDED] Makes Runs comparable.
     ) as run:
@@ -183,7 +185,8 @@ def main() -> None:
         # [W&B ARTIFACT VERSION] Wait for the server-assigned immutable vN so
         # the exact source can be promoted to W&B Registry next.
         logged_model.wait()
-        model_artifact_ref = logged_model.qualified_name
+        model_collection_ref = logged_model.qualified_name.rsplit(":", 1)[0]
+        model_artifact_ref = f"{model_collection_ref}:{logged_model.version}"
         # [W&B SUMMARY] Make the exact promotion input visible on the Run.
         run.summary["model/artifact_reference"] = model_artifact_ref
 

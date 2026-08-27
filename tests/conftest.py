@@ -6,6 +6,8 @@ import pytest
 def prevent_cloud_access(monkeypatch, tmp_path) -> None:
     """Keep every automated test local even if the shell is logged in to W&B."""
     monkeypatch.delenv("WANDB_API_KEY", raising=False)
+    monkeypatch.delenv("WANDB_PROJECT", raising=False)
+    monkeypatch.delenv("WANDB_ENTITY", raising=False)
     monkeypatch.setenv("WANDB_MODE", "disabled")
     monkeypatch.setenv("WANDB_DIR", str(tmp_path / "wandb"))
     monkeypatch.setenv("WANDB_CACHE_DIR", str(tmp_path / "wandb-cache"))

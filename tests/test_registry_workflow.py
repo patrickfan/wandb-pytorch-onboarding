@@ -19,6 +19,7 @@ def test_data_preparation_prints_an_exact_artifact_version(
 ) -> None:
     class LoggedDataset:
         qualified_name = "demo-team/demo-project/mnist-dataset:v2"
+        version = "v2"
 
         def __init__(self) -> None:
             self.waited = False
@@ -47,7 +48,13 @@ def test_data_preparation_prints_an_exact_artifact_version(
             return logged_dataset
 
     logged_dataset = LoggedDataset()
-    monkeypatch.setattr(prepare_data.wandb, "init", lambda **kwargs: FakeRun())
+    init_kwargs = {}
+
+    def fake_init(**kwargs):
+        init_kwargs.update(kwargs)
+        return FakeRun()
+
+    monkeypatch.setattr(prepare_data.wandb, "init", fake_init)
     monkeypatch.setattr(prepare_data.wandb, "Artifact", DatasetArtifact)
     monkeypatch.setattr(
         prepare_data,
@@ -62,6 +69,8 @@ def test_data_preparation_prints_an_exact_artifact_version(
 
     prepare_data.main()
 
+    assert init_kwargs["project"] is None
+    assert init_kwargs["entity"] is None
     assert logged_dataset.waited
     assert (
         "Dataset Artifact: demo-team/demo-project/mnist-dataset:v2"
@@ -70,10 +79,13 @@ def test_data_preparation_prints_an_exact_artifact_version(
 
 
 def test_training_prints_the_server_assigned_model_version(
-    monkeypatch, tmp_path: Path, capsys
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
 ) -> None:
     class LoggedModel:
-        qualified_name = "demo-team/demo-project/mnist-cnn:v4"
+        qualified_name = "demo-team/demo project/mnist-cnn:v4"
+        version = "v4"
 
         def __init__(self) -> None:
             self.waited = False
@@ -111,7 +123,13 @@ def test_training_prints_the_server_assigned_model_version(
 
     logged_model = LoggedModel()
     run = FakeRun(logged_model)
-    monkeypatch.setattr(train.wandb, "init", lambda **kwargs: run)
+    init_kwargs = {}
+
+    def fake_init(**kwargs):
+        init_kwargs.update(kwargs)
+        return run
+
+    monkeypatch.setattr(train.wandb, "init", fake_init)
     monkeypatch.setattr(train.wandb, "Image", lambda path: path)
     monkeypatch.setattr(train.wandb, "Artifact", OutputArtifact)
     monkeypatch.setattr(train, "select_device", lambda: torch.device("cpu"))
@@ -153,20 +171,151 @@ def test_training_prints_the_server_assigned_model_version(
 
     train.main()
 
+    assert init_kwargs["project"] is None
+    assert init_kwargs["entity"] is None
     assert logged_model.waited
     assert (
-        run.summary["model/artifact_reference"] == "demo-team/demo-project/mnist-cnn:v4"
+        run.summary["model/artifact_reference"] == "demo-team/demo project/mnist-cnn:v4"
     )
-    assert (
-        "Model Artifact: demo-team/demo-project/mnist-cnn:v4" in capsys.readouterr().out
-    )
+    output = capsys.readouterr().out
+    assert "Model Artifact: demo-team/demo project/mnist-cnn:v4" in output
+    assert "Next command: python promote_model.py" not in output
 
 
-def test_promotion_links_the_exact_source_object(monkeypatch, capsys) -> None:
+@pytest.mark.parametrize(
+    ("environment", "expected_project", "expected_entity"),
+    [
+        ({}, None, None),
+        (
+            {"WANDB_PROJECT": "team project", "WANDB_ENTITY": "env-team"},
+            "team project",
+            "env-team",
+        ),
+    ],
+    ids=["local-settings-default", "environment-defaults"],
+)
+def test_fixed_promotion_command_resolves_latest_once(
+    monkeypatch,
+    capsys,
+    environment: dict[str, str],
+    expected_project: str | None,
+    expected_entity: str | None,
+) -> None:
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+
     source = type(
         "SourceArtifact",
         (),
-        {"qualified_name": "demo-team/demo-project/mnist-cnn:v7"},
+        {
+            "qualified_name": "resolved-team/resolved-project/mnist-cnn:latest",
+            "version": "v8",
+            "source_qualified_name": (
+                "resolved-team/resolved-project/mnist-cnn:v8"
+            ),
+            "source_version": "v8",
+            "is_link": False,
+        },
+    )()
+    linked = type(
+        "RegistryArtifact",
+        (),
+        {
+            "qualified_name": "demo-org/wandb-registry-Models/mnist-cnn:v3",
+            "version": "v3",
+            "source_version": "v8",
+            "url": "https://wandb.ai/registry/example",
+        },
+    )()
+
+    class FakeRun:
+        entity = expected_entity or "local-settings-team"
+        project = expected_project or "local-settings-project"
+
+        def __init__(self) -> None:
+            self.summary = {}
+            self.use_calls = []
+            self.linked = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def use_artifact(self, reference, type):
+            self.use_calls.append((reference, type))
+            return source
+
+        def link_artifact(self, artifact, target_path, aliases):
+            self.linked = (artifact, target_path, aliases)
+            return linked
+
+    run = FakeRun()
+    init_kwargs = {}
+
+    def fake_init(**kwargs):
+        init_kwargs.update(kwargs)
+        return run
+
+    monkeypatch.setattr(promote_model.wandb, "init", fake_init)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["promote_model.py", "--registry", "Models"],
+    )
+
+    promote_model.main()
+
+    assert init_kwargs["project"] == expected_project
+    assert init_kwargs["entity"] == expected_entity
+    assert init_kwargs["config"]["source_artifact"] == "mnist-cnn:latest"
+    assert run.use_calls == [("mnist-cnn:latest", "model")]
+    assert run.linked == (
+        source,
+        "wandb-registry-Models/mnist-cnn",
+        ["candidate"],
+    )
+    output = capsys.readouterr().out
+    assert (
+        "Source Model Artifact: resolved-team/resolved-project/mnist-cnn:v8"
+        in output
+    )
+    assert (
+        run.summary["registry/source_artifact"]
+        == "resolved-team/resolved-project/mnist-cnn:v8"
+    )
+
+
+@pytest.mark.parametrize(
+    ("run_arguments", "expected_entity", "expected_project"),
+    [
+        ([], "demo-team", "demo-project"),
+        (
+            ["--entity", "promotion-team", "--project", "promotion-project"],
+            "promotion-team",
+            "promotion-project",
+        ),
+    ],
+    ids=["source-location-default", "explicit-run-location"],
+)
+def test_promotion_links_the_exact_source_object(
+    monkeypatch,
+    capsys,
+    run_arguments: list[str],
+    expected_entity: str,
+    expected_project: str,
+) -> None:
+    source = type(
+        "SourceArtifact",
+        (),
+        {
+            "qualified_name": "demo-team/demo-project/mnist-cnn:v7",
+            "version": "v7",
+            "source_qualified_name": "demo-team/demo-project/mnist-cnn:v7",
+            "source_version": "v7",
+            "is_link": False,
+        },
     )()
     linked = type(
         "RegistryArtifact",
@@ -180,8 +329,8 @@ def test_promotion_links_the_exact_source_object(monkeypatch, capsys) -> None:
     )()
 
     class FakeRun:
-        entity = "demo-team"
-        project = "demo-project"
+        entity = expected_entity
+        project = expected_project
 
         def __init__(self) -> None:
             self.summary = {}
@@ -226,13 +375,14 @@ def test_promotion_links_the_exact_source_object(monkeypatch, capsys) -> None:
             "mnist-cnn",
             "--alias",
             "candidate",
+            *run_arguments,
         ],
     )
 
     promote_model.main()
 
-    assert init_kwargs["entity"] == "demo-team"
-    assert init_kwargs["project"] == "demo-project"
+    assert init_kwargs["entity"] == expected_entity
+    assert init_kwargs["project"] == expected_project
     assert run.used == ("demo-team/demo-project/mnist-cnn:v7", "model")
     assert run.linked == (
         source,
@@ -240,15 +390,30 @@ def test_promotion_links_the_exact_source_object(monkeypatch, capsys) -> None:
         ["candidate"],
     )
     assert run.summary["registry/source_version"] == "v7"
+    assert (
+        run.summary["registry/source_artifact"]
+        == "demo-team/demo-project/mnist-cnn:v7"
+    )
     assert run.summary["registry/version"] == "v2"
+    assert (
+        run.summary["registry/artifact"]
+        == "demo-org/wandb-registry-Model Registry/mnist-cnn:v2"
+    )
     output = capsys.readouterr().out
     assert (
         "Registry alias: demo-org/wandb-registry-Model Registry/mnist-cnn:candidate"
         in output
     )
     assert (
-        "Next command: python inference.py --entity demo-team --project demo-project "
+        f"Next command: python inference.py --entity {expected_entity} "
+        f"--project {expected_project} "
         "--model-artifact 'demo-org/wandb-registry-Model Registry/mnist-cnn:candidate'"
+        in output
+    )
+    assert (
+        f"After assigning production: python inference.py --entity {expected_entity} "
+        f"--project {expected_project} --model-artifact "
+        "'demo-org/wandb-registry-Model Registry/mnist-cnn:production'"
         in output
     )
 
@@ -280,7 +445,13 @@ def test_missing_registry_error_explains_how_to_create_it(monkeypatch) -> None:
     source = type(
         "SourceArtifact",
         (),
-        {"qualified_name": "demo-team/demo-project/mnist-cnn:v7"},
+        {
+            "qualified_name": "demo-team/demo-project/mnist-cnn:v7",
+            "version": "v7",
+            "source_qualified_name": "demo-team/demo-project/mnist-cnn:v7",
+            "source_version": "v7",
+            "is_link": False,
+        },
     )()
     original_error = RuntimeError("project wandb-registry-Missing was not found")
 
@@ -344,10 +515,11 @@ def test_inference_accepts_project_and_registry_models(
 
     class RegistryArtifact:
         qualified_name = (
-            "demo-org/wandb-registry-Models/mnist-cnn:v3"
+            "demo-org/wandb-registry-Models/mnist-cnn:candidate"
             if is_registry
-            else "demo-team/demo-project/mnist-cnn:v3"
+            else "demo-team/demo-project/mnist-cnn:latest"
         )
+        version = "v3"
         source_qualified_name = "demo-team/demo-project/mnist-cnn:v7"
         source_version = "v7"
         is_link = is_registry
@@ -389,7 +561,13 @@ def test_inference_accepts_project_and_registry_models(
             self.logged_artifact = (artifact, aliases)
 
     run = FakeRun()
-    monkeypatch.setattr(inference.wandb, "init", lambda **kwargs: run)
+    init_kwargs = {}
+
+    def fake_init(**kwargs):
+        init_kwargs.update(kwargs)
+        return run
+
+    monkeypatch.setattr(inference.wandb, "init", fake_init)
     monkeypatch.setattr(inference.wandb, "Image", lambda path: path)
     monkeypatch.setattr(inference.wandb, "Artifact", OutputArtifact)
     monkeypatch.setattr(inference, "select_device", lambda: torch.device("cpu"))
@@ -430,11 +608,21 @@ def test_inference_accepts_project_and_registry_models(
 
     inference.main()
 
+    assert init_kwargs["project"] is None
+    assert init_kwargs["entity"] is None
     assert requested_references == [(expected_reference, "model")]
     assert run.summary["model/requested_reference"] == expected_reference
-    assert run.summary["model/resolved_reference"] == RegistryArtifact.qualified_name
+    expected_resolved_reference = (
+        "demo-org/wandb-registry-Models/mnist-cnn:v3"
+        if is_registry
+        else "demo-team/demo-project/mnist-cnn:v3"
+    )
+    assert run.summary["model/resolved_reference"] == expected_resolved_reference
     if is_registry:
-        assert run.summary["model/source_reference"].endswith(":v7")
+        assert (
+            run.summary["model/source_reference"]
+            == "demo-team/demo-project/mnist-cnn:v7"
+        )
     else:
         assert "model/source_reference" not in run.summary
     assert (tmp_path / "outputs" / "inference_metrics.json").is_file()

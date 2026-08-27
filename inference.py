@@ -24,13 +24,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--project",
-        # [W&B OPTIONAL] The environment variable supplies a reusable default.
-        default=os.environ.get("WANDB_PROJECT", "pytorch-mnist-onboarding"),
+        # [W&B OPTIONAL] Otherwise use the Project selected by `wandb init`.
+        default=os.environ.get("WANDB_PROJECT"),
+        help="Override WANDB_PROJECT or the Project selected by wandb init.",
     )
     parser.add_argument(
         "--entity",
-        # [W&B OPTIONAL] Leave this unset to use your default W&B entity.
+        # [W&B OPTIONAL] Otherwise use the entity selected by `wandb init`.
         default=os.environ.get("WANDB_ENTITY"),
+        help="Override WANDB_ENTITY or the entity selected by wandb init.",
     )
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
     # [W&B OPTIONAL] Set this only when you want a versioned Dataset Artifact.
@@ -59,7 +61,7 @@ def main() -> None:
     with wandb.init(
         # [W&B WORKFLOW] Keep training and inference together.
         project=args.project,
-        entity=args.entity,  # [W&B OPTIONAL] Omit it to use your default entity.
+        entity=args.entity,  # [W&B OPTIONAL] Otherwise use local W&B settings.
         job_type="inference",  # [W&B RECOMMENDED] Describes the Run's role.
         config={  # [W&B RECOMMENDED] Records the inputs used for inference.
             "dataset": "MNIST",
@@ -103,10 +105,17 @@ def main() -> None:
         model.load_state_dict(state_dict)
 
         # [W&B SUMMARY] Keep both the requested alias and resolved immutable vN.
+        model_collection_ref = model_artifact.qualified_name.rsplit(":", 1)[0]
+        exact_model_ref = f"{model_collection_ref}:{model_artifact.version}"
         run.summary["model/requested_reference"] = args.model_artifact
-        run.summary["model/resolved_reference"] = model_artifact.qualified_name
+        run.summary["model/resolved_reference"] = exact_model_ref
         if model_artifact.is_link:
-            run.summary["model/source_reference"] = model_artifact.source_qualified_name
+            source_collection_ref = model_artifact.source_qualified_name.rsplit(":", 1)[
+                0
+            ]
+            run.summary["model/source_reference"] = (
+                f"{source_collection_ref}:{model_artifact.source_version}"
+            )
             run.summary["model/source_version"] = model_artifact.source_version
 
         test_loss, test_accuracy, images, labels, predictions = run_inference(
