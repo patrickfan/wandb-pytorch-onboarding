@@ -178,7 +178,14 @@ def main() -> None:
             metadata={**config, "test_accuracy": test_accuracy},
         )
         model_artifact.add_file(checkpoint_path, name=checkpoint_path.name)
-        run.log_artifact(model_artifact, aliases=["latest"])
+        logged_model = run.log_artifact(model_artifact, aliases=["latest"])
+
+        # [W&B ARTIFACT VERSION] Wait for the server-assigned immutable vN so
+        # the exact source can be promoted to W&B Registry next.
+        logged_model.wait()
+        model_artifact_ref = logged_model.qualified_name
+        # [W&B SUMMARY] Make the exact promotion input visible on the Run.
+        run.summary["model/artifact_reference"] = model_artifact_ref
 
         # [W&B ARTIFACT OUTPUT] Upload plots and metrics as a separate,
         # versioned result bundle.
@@ -194,6 +201,7 @@ def main() -> None:
         run.log_artifact(results_artifact, aliases=["latest"])
 
         print(f"test_loss={test_loss:.4f} test_accuracy={test_accuracy:.2%}")
+        print(f"Model Artifact: {model_artifact_ref}")
         # [W&B OPTIONAL] Print the direct link to this Run when one is available.
         if run.url:
             print(f"W&B Run: {run.url}")

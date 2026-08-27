@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download a W&B model Artifact, run MNIST inference, and upload results."""
+"""Download a Project or Registry Model Artifact and run MNIST inference."""
 
 import argparse
 import json
@@ -20,7 +20,7 @@ from model import (
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run inference from a W&B Model Artifact."
+        description="Run inference from a W&B Model Artifact or Registry model."
     )
     parser.add_argument(
         "--project",
@@ -39,7 +39,14 @@ def main() -> None:
         default=None,
         help="Optional Dataset Artifact, for example mnist-dataset:latest",
     )
-    parser.add_argument("--model-artifact", default="mnist-cnn:latest")
+    parser.add_argument(
+        "--model-artifact",
+        default="mnist-cnn:latest",
+        help=(
+            "Project or Registry model reference. For example, mnist-cnn:v0 or "
+            "wandb-registry-Models/mnist-cnn:candidate."
+        ),
+    )
     parser.add_argument("--results-artifact-name", default="mnist-inference-results")
     parser.add_argument("--artifact-dir", type=Path, default=Path("artifacts"))
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/inference"))
@@ -74,7 +81,9 @@ def main() -> None:
             dataset_path = args.data_dir
             download_data = True
 
-        # [W&B ARTIFACT INPUT] Record and download the versioned trained model.
+        # [W&B MODEL INPUT] A Registry reference resolves its alias to one
+        # linked version and records it as this Run's model input. A normal
+        # Project Artifact reference works here too.
         model_artifact = run.use_artifact(args.model_artifact, type="model")
         model_path = Path(
             model_artifact.download(root=args.artifact_dir / "mnist-model")
@@ -92,6 +101,13 @@ def main() -> None:
             weights_only=True,
         )
         model.load_state_dict(state_dict)
+
+        # [W&B SUMMARY] Keep both the requested alias and resolved immutable vN.
+        run.summary["model/requested_reference"] = args.model_artifact
+        run.summary["model/resolved_reference"] = model_artifact.qualified_name
+        if model_artifact.is_link:
+            run.summary["model/source_reference"] = model_artifact.source_qualified_name
+            run.summary["model/source_version"] = model_artifact.source_version
 
         test_loss, test_accuracy, images, labels, predictions = run_inference(
             model, test_loader, device

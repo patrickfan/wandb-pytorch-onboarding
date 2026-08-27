@@ -1,7 +1,7 @@
-"""Ordinary PyTorch and MNIST code shared by all three scripts.
+"""Ordinary PyTorch and MNIST code shared by data, train, and inference scripts.
 
-This file does not import W&B. The W&B integration stays in prepare_data.py,
-train.py, and inference.py so the boundary is easy to see.
+This file does not import W&B. Integration stays in the W&B-facing orchestration
+scripts so the boundary is easy to see.
 """
 
 from pathlib import Path

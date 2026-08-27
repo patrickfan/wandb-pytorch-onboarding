@@ -70,12 +70,16 @@ def main() -> None:
         )
 
         # [W&B ARTIFACT OUTPUT] Upload and version the Dataset Artifact.
-        run.log_artifact(dataset_artifact, aliases=["latest"])
+        logged_dataset = run.log_artifact(dataset_artifact, aliases=["latest"])
 
+        # [W&B ARTIFACT VERSION] Print the immutable input version so training
+        # and inference can consume the same exact dataset.
+        logged_dataset.wait()
+
+        print(f"Dataset Artifact: {logged_dataset.qualified_name}")
         print(
-            f"Uploaded dataset Artifact: {args.artifact_name}:latest "
-            f"({train_image_count} train/validation images, "
-            f"{test_image_count} test images)"
+            f"Dataset images: {train_image_count} train/validation, "
+            f"{test_image_count} test"
         )
 
 
