@@ -1,0 +1,5 @@
+# Python 3.10 or newer is required.
+matplotlib>=3.8
+torch>=2.2
+torchvision>=0.17
+wandb>=0.22.3

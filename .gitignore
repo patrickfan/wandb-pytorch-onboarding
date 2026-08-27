@@ -1,0 +1,16 @@
+.DS_Store
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Reproducible downloads and generated experiment outputs
+data/
+artifacts/
+outputs/
+wandb/
+wandb-data/
+wandb-cache/
+wandb-config/
+*.pt
