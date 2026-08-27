@@ -177,21 +177,22 @@ optional. `run.watch()` is intentionally not used.
 `model.py` contains the ordinary PyTorch, data, evaluation, and plotting code
 and does not import W&B. W&B integration stays in the other scripts.
 
-| Code label | Meaning |
-|---|---|
-| `[W&B CORE]` | Imports W&B or starts a Run |
-| `[W&B WORKFLOW]` | Keeps related Runs in one Project |
-| `[W&B METRICS]` | Logs scalar metrics |
-| `[W&B METRICS + MEDIA]` | Logs metrics and plots |
-| `[W&B ARTIFACT INPUT]` | Records and downloads an Artifact input |
-| `[W&B ARTIFACT OUTPUT]` | Uploads a versioned file bundle |
-| `[W&B ARTIFACT VERSION]` | Reads the server-assigned immutable `vN` |
-| `[W&B MODEL INPUT]` | Downloads a Project or Registry model |
-| `[W&B REGISTRY]` | Links a model version into Registry |
-| `[W&B SUMMARY]` | Stores final provenance fields |
-| `[W&B RECOMMENDED]` | Adds useful metadata, but is not required |
-| `[W&B OPTIONAL]` | Marks convenience or add-on behavior |
-| `[W&B TEST SAFETY]` | Prevents tests from calling W&B Cloud |
+The `[W&B ...]` comments in the scripts are only visual markers that make W&B
+code easy to find. These are the actual W&B Python API calls used:
+
+| Actual W&B code | What it does | Needed when |
+|---|---|---|
+| `with wandb.init(...) as run` | Creates one Run in the selected entity and Project; the context manager finishes it | Required for every tracked job |
+| `run.log({...})` | Sends custom metrics to the Run history | Required for loss and accuracy charts |
+| `wandb.Image(path)` | Converts a saved plot into W&B media | Used for plots in the Web UI |
+| `wandb.Artifact(name=..., type=...)` | Creates an Artifact description | Used for model, results, or optional dataset versioning |
+| `artifact.add_file(...)` / `artifact.add_dir(...)` | Adds local files to an Artifact | Used before logging an Artifact |
+| `run.log_artifact(artifact, aliases=[...])` | Logs a versioned Artifact output | Required for this tutorial's model handoff |
+| `run.use_artifact(reference, type=...)` | Resolves an Artifact input and records lineage | Required when training or inference consumes an Artifact |
+| `artifact.download(root=...)` | Downloads the resolved Artifact files | Required before loading its dataset or model file |
+| `artifact.wait()` and `artifact.version` | Waits for logging and reads the immutable server version such as `v3` | Used when an exact version is needed |
+| `run.summary["name"] = value` | Stores final metrics or provenance fields | Recommended, not required |
+| `run.link_artifact(...)` | Links an exact Model Artifact into W&B Registry | Optional Registry workflow only |
 
 ## Four terms used in this guide
 
