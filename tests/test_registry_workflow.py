@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 import torch
 
+import bayesian_sweep
 import inference
 import prepare_data
 import promote_model
@@ -12,6 +13,170 @@ from model import MNISTCNN
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_default_model_keeps_the_existing_checkpoint_layout() -> None:
+    state_dict = MNISTCNN().state_dict()
+    assert {name: tuple(tensor.shape) for name, tensor in state_dict.items()} == {
+        "network.0.weight": (16, 1, 3, 3),
+        "network.0.bias": (16,),
+        "network.3.weight": (32, 16, 3, 3),
+        "network.3.bias": (32,),
+        "network.7.weight": (10, 32 * 7 * 7),
+        "network.7.bias": (10,),
+    }
+
+
+@pytest.mark.parametrize(
+    ("destination_args", "expected_entity", "expected_project"),
+    [
+        ([], None, None),
+        (
+            ["--entity", "demo-team", "--project", "demo-project"],
+            "demo-team",
+            "demo-project",
+        ),
+    ],
+    ids=["local-settings", "explicit-destination"],
+)
+def test_bayesian_sweep_uses_assigned_hyperparameters(
+    monkeypatch,
+    tmp_path: Path,
+    destination_args: list[str],
+    expected_entity: str | None,
+    expected_project: str | None,
+) -> None:
+    class FakeConfig(dict):
+        def update(self, values, **kwargs):
+            super().update(values)
+
+    class FakeRun:
+        def __init__(self) -> None:
+            self.config = FakeConfig(
+                learning_rate=0.002,
+                hidden=128,
+                dropout=0.35,
+            )
+            self.summary = {}
+            self.logged = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def log(self, values):
+            self.logged.append(values)
+
+    run = FakeRun()
+    sweep_call = {}
+    agent_call = {}
+    init_call = {}
+    training_call = {}
+
+    def fake_sweep(config, entity, project):
+        sweep_call.update(config=config, entity=entity, project=project)
+        return "fake-sweep-id"
+
+    def fake_agent(sweep_id, function, entity, project, count):
+        agent_call.update(
+            sweep_id=sweep_id,
+            entity=entity,
+            project=project,
+            count=count,
+        )
+        function()
+
+    def fake_train_one_epoch(model, loader, optimizer, criterion, device):
+        training_call.update(model=model, optimizer=optimizer)
+        return 0.4
+
+    def fake_init(**kwargs):
+        init_call.update(kwargs)
+        return run
+
+    monkeypatch.setattr(bayesian_sweep.wandb, "sweep", fake_sweep)
+    monkeypatch.setattr(bayesian_sweep.wandb, "agent", fake_agent)
+    monkeypatch.setattr(bayesian_sweep.wandb, "init", fake_init)
+    monkeypatch.setattr(
+        bayesian_sweep,
+        "build_loaders",
+        lambda **kwargs: (object(), object(), object()),
+    )
+    monkeypatch.setattr(bayesian_sweep, "select_device", lambda: torch.device("cpu"))
+    monkeypatch.setattr(bayesian_sweep, "train_one_epoch", fake_train_one_epoch)
+    monkeypatch.setattr(
+        bayesian_sweep,
+        "evaluate",
+        lambda *args: (0.2, 0.91, torch.tensor([]), torch.tensor([])),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "bayesian_sweep.py",
+            *destination_args,
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--epochs",
+            "1",
+        ],
+    )
+
+    bayesian_sweep.main()
+
+    assert sweep_call["config"]["method"] == "bayes"
+    assert sweep_call["config"]["metric"] == {
+        "name": "val/accuracy",
+        "goal": "maximize",
+    }
+    assert sweep_call["config"]["parameters"]["learning_rate"] == {
+        "distribution": "log_uniform_values",
+        "min": 1e-5,
+        "max": 1e-1,
+    }
+    assert sweep_call["config"]["parameters"]["hidden"] == {
+        "values": [64, 128, 256, 512]
+    }
+    assert sweep_call["config"]["parameters"]["dropout"] == {
+        "min": 0.0,
+        "max": 0.5,
+    }
+    assert sweep_call["entity"] == expected_entity
+    assert sweep_call["project"] == expected_project
+    assert agent_call == {
+        "sweep_id": "fake-sweep-id",
+        "entity": expected_entity,
+        "project": expected_project,
+        "count": 8,
+    }
+    assert init_call["entity"] == expected_entity
+    assert init_call["project"] == expected_project
+    assert init_call["job_type"] == "sweep-trial"
+
+    linear_layers = [
+        layer
+        for layer in training_call["model"].network
+        if isinstance(layer, torch.nn.Linear)
+    ]
+    dropout_layers = [
+        layer
+        for layer in training_call["model"].network
+        if isinstance(layer, torch.nn.Dropout)
+    ]
+    assert linear_layers[-2].out_features == 128
+    assert dropout_layers[0].p == 0.35
+    assert training_call["optimizer"].param_groups[0]["lr"] == 0.002
+    assert run.logged == [
+        {
+            "epoch": 1,
+            "train/loss": 0.4,
+            "val/loss": 0.2,
+            "val/accuracy": 0.91,
+        }
+    ]
+    assert run.summary["best_val_accuracy"] == 0.91
 
 
 def test_data_preparation_prints_an_exact_artifact_version(

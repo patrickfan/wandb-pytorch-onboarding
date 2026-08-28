@@ -53,6 +53,23 @@ Team and Project are not the same thing. In the URL
 `https://wandb.ai/TEAM-OR-USERNAME/pytorch-mnist-onboarding`, the first part is
 the owner—called `entity` in the Python SDK—and the second part is the Project.
 
+For organization-owned work, the W&B hierarchy is:
+
+```text
+Organization
+├── Team
+│   └── Project
+│       ├── Workspace and Runs
+│       └── source Model Artifact
+└── Registry
+    └── Collection
+        └── linked Model Artifact version
+```
+
+Registry is a separate branch at the Organization level; it is not inside a
+Team or Project. The linked Registry version points to the source Model
+Artifact rather than uploading a second copy of the model.
+
 The command saves your choices in this directory's `wandb/settings` file. The
 Python scripts then call `wandb.init()` to create each Run and upload it to that
 destination. Keep running the remaining commands from this directory.
@@ -160,6 +177,43 @@ the exact `Dataset Artifact: ...:vN` printed by the script.
 The Dataset Artifact includes `MNIST_LICENSE.md`. Retain that file and review
 your organization's data-sharing policy before publishing a dataset copy.
 
+## Optional: tune hyperparameters with a Bayesian Sweep
+
+This online workflow creates one Sweep and starts an agent with a limit of
+eight trial Runs in the entity and Project selected earlier:
+
+```bash
+python bayesian_sweep.py
+```
+
+The script searches this space:
+
+```python
+SWEEP_CONFIG = {
+    "method": "bayes",
+    "metric": {"name": "val/accuracy", "goal": "maximize"},
+    "parameters": {
+        "learning_rate": {
+            "distribution": "log_uniform_values",
+            "min": 1e-5,
+            "max": 1e-1,
+        },
+        "hidden": {"values": [64, 128, 256, 512]},
+        "dropout": {"min": 0.0, "max": 0.5},
+    },
+}
+```
+
+Each trial gets its values from `run.config`, trains on the MNIST training
+split, and reports `val/accuracy` on the validation split. The Sweep optimizes
+the final logged validation accuracy; the test split is not used for tuning.
+
+This script demonstrates search and visualization only. It does not upload a
+Model Artifact, select a winning checkpoint, or pass the winning `hidden` and
+`dropout` values into `train.py`. The normal `train.py` workflow still creates
+the baseline model; connecting the winning architecture to Registry is a
+separate advanced extension.
+
 ## What W&B code is required?
 
 For basic online tracking with custom metrics, the W&B-specific minimum is:
@@ -172,13 +226,35 @@ For basic online tracking with custom metrics, the W&B-specific minimum is:
 
 Model Artifacts are required by this tutorial's separate inference workflow,
 but not by basic W&B metric tracking. Dataset Artifacts and Registry are
-optional. `run.watch()` is intentionally not used.
+optional. Sweeps and `run.watch()` are also optional.
 
 `model.py` contains the ordinary PyTorch, data, evaluation, and plotting code
 and does not import W&B. W&B integration stays in the other scripts.
 
+**In this repository, every Run uses the context-manager form, and Run-scoped
+operations go through `run`:**
+
+```python
+with wandb.init(...) as run:
+    run.log({"loss": loss})
+    run.config.update({"epochs": epochs})
+    run.summary["best_accuracy"] = best_accuracy
+    run.log_artifact(model_artifact)
+    source_artifact = run.use_artifact("model:v0")
+    run.link_artifact(source_artifact, target_path="wandb-registry-Models/model")
+    run.watch(model)  # Optional; adds gradient/parameter tracking overhead.
+```
+
+Module-level constructors create W&B objects with `wandb.Image(...)` and
+`wandb.Artifact(...)`. Operations on an Artifact use that object's methods,
+such as `artifact.add_file(...)`, `artifact.download(...)`, and
+`artifact.wait()`; these are object-scoped, not Run-scoped. Sweep control is
+also separate: `wandb.sweep(...)` creates the server-side Sweep and
+`wandb.agent(...)` runs trials. Each trial then opens its own context-managed
+`run`.
+
 The `[W&B ...]` comments in the scripts are only visual markers that make W&B
-code easy to find. These are the actual W&B Python API calls used:
+code easy to find. These are the actual W&B Python APIs used or demonstrated:
 
 | Actual W&B code | What it does | Needed when |
 |---|---|---|
@@ -191,8 +267,12 @@ code easy to find. These are the actual W&B Python API calls used:
 | `run.use_artifact(reference, type=...)` | Resolves an Artifact input and records lineage | Required when training or inference consumes an Artifact |
 | `artifact.download(root=...)` | Downloads the resolved Artifact files | Required before loading its dataset or model file |
 | `artifact.wait()` and `artifact.version` | Waits for logging and reads the immutable server version such as `v3` | Used when an exact version is needed |
+| `run.config[...]` / `run.config.update(...)` | Reads Sweep choices or records configuration | Required by the Sweep trial |
 | `run.summary["name"] = value` | Stores final metrics or provenance fields | Recommended, not required |
+| `run.watch(model)` | Tracks gradients or parameters | Optional; not enabled by these scripts |
 | `run.link_artifact(...)` | Links an exact Model Artifact into W&B Registry | Optional Registry workflow only |
+| `wandb.sweep(...)` | Creates a server-side hyperparameter Sweep | Optional Sweep workflow only |
+| `wandb.agent(...)` | Requests configurations and runs bounded trials | Optional Sweep workflow only |
 
 ## Four terms used in this guide
 
@@ -226,6 +306,7 @@ Project and use the direct inference workflow instead. `candidate` and
 - `inference.py`: Project/Registry model download and inference results
 - `promote_model.py`: optional Registry link and aliases
 - `prepare_data.py`: optional Dataset Artifact publisher
+- `bayesian_sweep.py`: optional Bayesian hyperparameter Sweep
 - `tests/`: fake-W&B tests that cannot write to W&B Cloud
 
 ## Test locally and publish safely
@@ -255,4 +336,6 @@ Before publishing to GitHub:
 - [W&B Registry](https://docs.wandb.ai/models/registry)
 - [Registry creation and visibility](https://docs.wandb.ai/models/registry/create_registry)
 - [Registry roles](https://docs.wandb.ai/models/registry/configure_registry)
+- [W&B Sweeps walkthrough](https://docs.wandb.ai/models/sweeps/walkthrough)
+- [Sweep configuration keys](https://docs.wandb.ai/models/sweeps/sweep-config-keys)
 - [TorchVision MNIST](https://docs.pytorch.org/vision/stable/generated/torchvision.datasets.MNIST.html)

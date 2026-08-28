@@ -20,3 +20,5 @@ def prevent_cloud_access(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(wandb, "login", blocked)
     monkeypatch.setattr(wandb, "Api", blocked)
     monkeypatch.setattr(wandb, "init", blocked)
+    monkeypatch.setattr(wandb, "sweep", blocked)
+    monkeypatch.setattr(wandb, "agent", blocked)

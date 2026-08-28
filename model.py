@@ -1,4 +1,4 @@
-"""Ordinary PyTorch and MNIST code shared by data, train, and inference scripts.
+"""Ordinary PyTorch and MNIST code shared by the workflow scripts.
 
 This file does not import W&B. Integration stays in the W&B-facing orchestration
 scripts so the boundary is easy to see.
@@ -21,11 +21,11 @@ MNIST_STANDARD_DEVIATION = 0.3081
 
 
 class MNISTCNN(nn.Module):
-    """A small convolutional network for 28 x 28 grayscale images."""
+    """A CNN with the original head by default and an optional Sweep head."""
 
-    def __init__(self) -> None:
+    def __init__(self, hidden: int | None = None, dropout: float = 0.0) -> None:
         super().__init__()
-        self.network = nn.Sequential(
+        layers = [
             nn.Conv2d(1, 16, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2),
@@ -33,8 +33,19 @@ class MNISTCNN(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(2),
             nn.Flatten(),
-            nn.Linear(32 * 7 * 7, 10),
-        )
+        ]
+        if hidden is None:
+            layers.append(nn.Linear(32 * 7 * 7, 10))
+        else:
+            layers.extend(
+                [
+                    nn.Linear(32 * 7 * 7, hidden),
+                    nn.ReLU(),
+                    nn.Dropout(dropout),
+                    nn.Linear(hidden, 10),
+                ]
+            )
+        self.network = nn.Sequential(*layers)
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
         return self.network(images)
